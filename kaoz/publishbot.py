@@ -160,7 +160,33 @@ class Publisher(irc.client.SimpleIRCClient):
         # Dequeue everything, creating channel objects if needed
         while not self._queue.empty():
             (channel, message) = self._queue.get()
-            self._chans[channel].messages.append(message)
+            # According to the RFC http://tools.ietf.org/html/rfc2812#page-6,
+            # Message is admissible only if the IRC client won't eventually
+            # have to send a message longer than 512 bytes
+            # The message that will be sent by the irc.client module is :
+            # 'PRIVMSG {channel} :{message}\r\n', so our message must be at
+            # most 512 - 12 - len(channel) long
+            max_message_size = 512 - 12 - len(channel.encode('utf-8'))
+            if len(message.encode('utf-8')) > max_message_size:
+                # The message needs to be split up
+                logging.debug(
+                    u"Message for channel %s longer than %s bytes, splitting",
+                    channel,
+                    max_message_size,
+                )
+                # Without this the message isn't splitted at the right index
+                # the 'ignore' argument skip errors caused by utf-8 chars being
+                # divided between the two strings.
+                # This can make a char disappear.
+                utf8_message = message.encode('utf-8')
+                message1 = utf8_message[:max_message_size] \
+                                .decode('utf-8', 'ignore')
+                message2 = utf8_message[max_message_size:] \
+                                .decode('utf-8', 'ignore')
+                self._queue.put((channel, message1))
+                self._queue.put((channel, message2))
+            else:
+                self._chans[channel].messages.append(message)
 
         # Don't do anything if server is stopped
         if self._stop.is_set():
